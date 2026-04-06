@@ -10,14 +10,17 @@ class Bacera_Module_Products {
         add_action( 'woocommerce_after_product_object_save', [ __CLASS__, 'sync_product_to_pancake' ], 10, 2 );
     }
 
+    /* ==========================================================================
+       PHẦN 1: ĐỒNG BỘ TỪ WEB LÊN PANCAKE POS (POST / PUT)
+       ========================================================================== */
+
     /**
      * Đồng bộ dữ liệu sản phẩm lên Pancake POS
-     * * @param WC_Product $product Đối tượng sản phẩm WooCommerce
+     * @param WC_Product $product Đối tượng sản phẩm WooCommerce
      * @param \WC_Data_Store $data_store Data store
      */
     public static function sync_product_to_pancake( $product, $data_store ) {
         // 1. CHỈ ĐỒNG BỘ NGÔN NGỮ MẶC ĐỊNH (Tiếng Việt)
-        // Nếu bạn dùng WPML hoặc Polylang, cần check language code tại đây để tránh tạo sản phẩm trùng lặp.
         if ( function_exists('pll_get_post_language') ) {
             $lang = pll_get_post_language( $product->get_id() );
             if ( $lang !== 'vi' ) {
@@ -40,18 +43,14 @@ class Bacera_Module_Products {
         ];
 
         // 3. XỬ LÝ DANH MỤC (CATEGORIES)
-        // Lưu ý: Cần có một bảng mapping giữa Category ID của Woo và Category ID của Pancake.
-        // Ở đây lấy mô phỏng mảng ID.
         $product_data['category_ids'] = []; 
         
         // 4. XỬ LÝ VARIATIONS (BIẾN THỂ)
         $variations_payload = [];
 
         if ( $product->is_type( 'variable' ) ) {
-            // Trường hợp sản phẩm có biến thể (Ví dụ: Cốc gốm - Màu Xanh/Đỏ)
             $available_variations = $product->get_children();
             
-            // Lấy thuộc tính sản phẩm cha
             $attributes = $product->get_attributes();
             $product_data['product_attributes'] = [];
             foreach ( $attributes as $attr ) {
@@ -82,7 +81,6 @@ class Bacera_Module_Products {
                     'is_hidden'        => $variation->get_status() !== 'publish',
                 ];
 
-                // Nếu là cập nhật, cần truyền id của biến thể trên Pancake
                 $pancake_var_id = $variation->get_meta( '_pancake_variation_id' );
                 if ( ! empty( $pancake_var_id ) ) {
                     $variation_item['id'] = $pancake_var_id;
@@ -91,10 +89,8 @@ class Bacera_Module_Products {
                 $variations_payload[] = $variation_item;
             }
         } else {
-            // Trường hợp sản phẩm đơn giản (Simple Product)
-            // Pancake vẫn yêu cầu gửi data vào mảng "variations" dù chỉ có 1 item
             $single_variation = [
-                'fields'           => [], // Sản phẩm đơn giản không có fields
+                'fields'           => [],
                 'retail_price'     => (int) $product->get_regular_price(),
                 'price_at_counter' => (int) $product->get_price(),
                 'weight'           => (float) $product->get_weight(),
@@ -103,7 +99,6 @@ class Bacera_Module_Products {
                 'is_hidden'        => $product->get_status() !== 'publish',
             ];
 
-            // Truyền ID biến thể nếu đang update
             $pancake_var_id = $product->get_meta( '_pancake_variation_id' );
             if ( ! empty( $pancake_var_id ) ) {
                 $single_variation['id'] = $pancake_var_id;
@@ -116,16 +111,13 @@ class Bacera_Module_Products {
 
         // 5. GỬI REQUEST LÊN PANCAKE POS
         if ( empty( $pancake_product_id ) ) {
-            // SẢN PHẨM MỚI -> Gọi POST
             $endpoint = '/shops/{SHOP_ID}/products';
             $response = $api->request( $endpoint, 'POST', [ 'product' => $product_data ] );
             
             if ( $response && isset( $response['success'] ) && $response['success'] === true ) {
-                // Giả định API trả về ID của product vừa tạo (tuỳ thuộc format thực tế Pancake trả về)
                 if ( isset( $response['data']['id'] ) ) {
                     $product->update_meta_data( '_pancake_product_id', $response['data']['id'] );
                     
-                    // Lưu lại ID của biến thể đầu tiên để dùng cho Update/Inventory sau này
                     if ( isset( $response['data']['variations'][0]['id'] ) ) {
                         $product->update_meta_data( '_pancake_variation_id', $response['data']['variations'][0]['id'] );
                     }
@@ -137,7 +129,6 @@ class Bacera_Module_Products {
             }
 
         } else {
-            // SẢN PHẨM ĐÃ TỒN TẠI -> Gọi PUT
             $endpoint = '/shops/{SHOP_ID}/products/' . $pancake_product_id;
             $response = $api->request( $endpoint, 'PUT', [ 'product' => $product_data ] );
 
@@ -151,7 +142,6 @@ class Bacera_Module_Products {
     
     /**
      * Cập nhật tồn kho hàng loạt (Bulk update inventory)
-     * Gọi thủ công hoặc qua cron job khi cần đồng bộ kho từ Web -> Pancake
      */
     public static function sync_inventory_to_pancake( $variation_data ) {
         $api = new Pancake_API_Client();
@@ -159,10 +149,60 @@ class Bacera_Module_Products {
         $payload = [
             'is_actual_remain_quantity' => true,
             'variations_warehouses'     => $variation_data 
-            // format: [['variation_id' => '...', 'remain_quantity' => 15, 'warehouse_id' => '...']]
         ];
 
         $endpoint = '/shops/{SHOP_ID}/variations/update_quantity';
         return $api->request( $endpoint, 'POST', $payload );
+    }
+
+    /* ==========================================================================
+       PHẦN 2: LẤY DỮ LIỆU TỪ PANCAKE POS XUỐNG WEBSITE (GET)
+       ========================================================================== */
+
+    /**
+     * Lấy danh sách sản phẩm và biến thể để hiển thị trên Shop Page
+     * @param array $args Tham số lọc (page_size, page_number, category_id, search...)
+     * @return array Dữ liệu trả về từ API
+     */
+    public static function get_products( $args = [] ) {
+        $api = new Pancake_API_Client();
+        $endpoint = '/shops/{SHOP_ID}/products/variations';
+
+        // Nếu có tham số lọc (Ví dụ: lọc theo trang, danh mục, tìm kiếm)
+        if ( ! empty( $args ) ) {
+            $endpoint .= '?' . http_build_query( $args );
+        }
+
+        return $api->request( $endpoint, 'GET' );
+    }
+
+    /**
+     * Lấy chi tiết một sản phẩm cụ thể (cho trang Product Detail)
+     * @param string $product_sku Mã SKU hoặc ID của sản phẩm trên Pancake
+     * @return array Dữ liệu chi tiết sản phẩm
+     */
+    public static function get_product_detail( $product_sku ) {
+        $api = new Pancake_API_Client();
+        // Cần urlencode để tránh lỗi đường dẫn nếu SKU có ký tự đặc biệt
+        $endpoint = '/shops/{SHOP_ID}/products/' . urlencode( $product_sku );
+        return $api->request( $endpoint, 'GET' );
+    }
+
+    /**
+     * Lấy danh sách các danh mục sản phẩm (Categories)
+     * @return array Dữ liệu danh mục
+     */
+    public static function get_categories() {
+        $api = new Pancake_API_Client();
+        return $api->request( '/shops/{SHOP_ID}/categories', 'GET' );
+    }
+
+    /**
+     * Lấy danh sách các kho hàng (Warehouses)
+     * @return array Dữ liệu kho hàng (dùng để xác định nơi trừ tồn kho)
+     */
+    public static function get_warehouses() {
+        $api = new Pancake_API_Client();
+        return $api->request( '/shops/{SHOP_ID}/warehouses', 'GET' );
     }
 }

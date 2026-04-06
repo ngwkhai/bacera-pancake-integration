@@ -18,8 +18,11 @@ class Bacera_Admin_Settings {
     }
 
     public static function register_settings() {
-        register_setting( 'bacera_pancake_options_group', 'bacera_pancake_api_key' );
         register_setting( 'bacera_pancake_options_group', 'bacera_pancake_shop_id' );
+        register_setting( 'bacera_pancake_options_group', 'bacera_pancake_api_key' );
+        register_setting( 'bacera_pancake_options_group', 'bacera_pancake_default_warehouse' );
+        register_setting( 'bacera_pancake_options_group', 'bacera_pancake_sync_products' );
+        register_setting( 'bacera_pancake_options_group', 'bacera_pancake_sync_orders' );
     }
 
     public static function render_settings_page() {
