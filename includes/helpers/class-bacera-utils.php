@@ -72,7 +72,7 @@ class Bacera_Utils {
      */
     public static function handle_image_streaming() {
         // 1. Lấy slug từ URL
-        $slug = get_query_var( 'pancake_img_slug' );
+        $slug = get_query_var( 'bacera_img_slug' );
         if ( ! $slug ) return;
     
         // Xóa dấu gạch chéo ở cuối slug nếu có (để khớp với database)
@@ -139,6 +139,6 @@ class Bacera_Utils {
         $slug = sanitize_title( $name . '-' . $pancake_id );
         
         // Trả về URL cục bộ: bacera.vn/pancake-img/ten-san-pham-id
-        return home_url( "/pancake-img/{$slug}" );
+        return home_url( "/bacera-img/{$slug}" );
     }
 }
