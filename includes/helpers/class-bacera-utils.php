@@ -61,6 +61,101 @@ class Bacera_Utils {
             update_post_meta( $post_id, '_pancake_image_url', $item['images'][0] );
         }
         update_post_meta( $post_id, '_pancake_id', $pancake_id );
+        if ( ! empty( $item['product_id'] ) ) {
+            update_post_meta( $post_id, '_pancake_product_id', sanitize_text_field( (string) $item['product_id'] ) );
+        }
+    }
+
+    /**
+     * Lấy object sản phẩm từ Pancake GET /products/{id} (và tự bổ sung _pancake_product_id nếu thiếu).
+     *
+     * @param int $post_id ID bài pancake_product.
+     * @return array<string,mixed>|null
+     */
+    public static function fetch_product_detail_for_wp_post( $post_id ) {
+        $post_id = (int) $post_id;
+        if ( $post_id <= 0 || ! class_exists( 'Bacera_Module_Products' ) || ! class_exists( 'Pancake_API_Client' ) ) {
+            return null;
+        }
+
+        $product_uuid  = get_post_meta( $post_id, '_pancake_product_id', true );
+        $variation_id  = get_post_meta( $post_id, '_pancake_id', true );
+
+        if ( $product_uuid === '' && $variation_id !== '' ) {
+            $api = new Pancake_API_Client();
+            $q   = http_build_query(
+                [
+                    'page_size'       => 1,
+                    'variation_ids'   => [ $variation_id ],
+                ]
+            );
+            $r = $api->request( '/shops/{SHOP_ID}/products/variations?' . $q, 'GET' );
+            if ( is_array( $r ) && ! empty( $r['data'][0]['product_id'] ) ) {
+                $product_uuid = (string) $r['data'][0]['product_id'];
+                update_post_meta( $post_id, '_pancake_product_id', $product_uuid );
+            }
+        }
+
+        if ( $product_uuid === '' ) {
+            return null;
+        }
+
+        $raw = Bacera_Module_Products::get_product_detail( $product_uuid );
+        if ( ! is_array( $raw ) ) {
+            return null;
+        }
+        if ( isset( $raw['success'] ) && $raw['success'] === false ) {
+            return null;
+        }
+
+        $product = isset( $raw['data'] ) && is_array( $raw['data'] ) ? $raw['data'] : $raw;
+        if ( empty( $product['variations'] ) && empty( $product['name'] ) ) {
+            return null;
+        }
+
+        return $product;
+    }
+
+    /**
+     * URL trang Shop (template template-shop.php) nếu có.
+     */
+    public static function get_shop_page_url() {
+        $pages = get_pages(
+            [
+                'meta_key'   => '_wp_page_template',
+                'meta_value' => 'templates/template-shop.php',
+                'number'     => 1,
+            ]
+        );
+        if ( ! empty( $pages[0] ) ) {
+            return get_permalink( $pages[0]->ID );
+        }
+        return home_url( '/' );
+    }
+
+    /**
+     * Map id danh mục (chuỗi) => tên hiển thị từ cây categories API.
+     *
+     * @param array<int,array<string,mixed>> $categories_data
+     * @return array<string,string>
+     */
+    public static function flatten_category_names( array $categories_data ) {
+        $out = [];
+        $walk = static function ( $nodes ) use ( &$out, &$walk ) {
+            foreach ( $nodes as $n ) {
+                if ( ! is_array( $n ) ) {
+                    continue;
+                }
+                if ( isset( $n['id'] ) ) {
+                    $out[ (string) $n['id'] ] = isset( $n['text'] ) ? (string) $n['text'] : ( isset( $n['name'] ) ? (string) $n['name'] : '' );
+                }
+                if ( ! empty( $n['nodes'] ) && is_array( $n['nodes'] ) ) {
+                    $walk( $n['nodes'] );
+                }
+            }
+        };
+        $walk( $categories_data );
+        return $out;
     }
 
     /* ==========================================================================
@@ -140,5 +235,25 @@ class Bacera_Utils {
         
         // Trả về URL cục bộ: bacera.vn/pancake-img/ten-san-pham-id
         return home_url( "/bacera-img/{$slug}" );
+    }
+
+    /**
+     * Permalink trang chi tiết (single-pancake_product.php) — slug trùng upsert_external_product().
+     *
+     * @param array<string,mixed> $item Một variation/product từ API (cùng shape với upsert).
+     * @return string URL đầy đủ hoặc chuỗi rỗng nếu không tạo được.
+     */
+    public static function get_product_permalink( $item ) {
+        $name       = $item['product']['name'] ?? $item['name'] ?? 'product';
+        $pancake_id = $item['id'] ?? $item['product_id'] ?? null;
+        if ( $pancake_id === null || $pancake_id === '' ) {
+            return '';
+        }
+        $slug = sanitize_title( $name . '-' . $pancake_id );
+        $post = get_page_by_path( $slug, OBJECT, 'pancake_product' );
+        if ( $post instanceof \WP_Post ) {
+            return get_permalink( $post );
+        }
+        return '';
     }
 }
