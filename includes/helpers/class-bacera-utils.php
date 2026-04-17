@@ -28,32 +28,38 @@ class Bacera_Utils {
         $pancake_id = $item['id'] ?? null;
     
         if ( ! $pancake_id ) return;
-    
-        // Tạo slug thống nhất: ten-san-pham-pancakeid
-        $slug = sanitize_title( $name . '-' . $pancake_id );
-    
+
+        // Slug chỉ từ tên (vd. still-cup), không gắn UUID — trùng tên → wp_unique_post_slug (still-cup-2, …).
+        $base_slug = sanitize_title( $name );
+        if ( $base_slug === '' ) {
+            $base_slug = 'product';
+        }
+
         $post_data = [
-            'post_title'   => $name,
-            'post_status'  => 'publish',
-            'post_type'    => 'pancake_product',
-            'post_name'    => $slug, // Đảm bảo slug này khớp với URL ảnh
+            'post_title'  => $name,
+            'post_status' => 'publish',
+            'post_type'   => 'pancake_product',
         ];
-    
+
         // Tìm xem đã tồn tại chưa
-        $existing = get_posts([
-            'post_type'  => 'pancake_product',
-            'meta_key'   => '_pancake_id',
-            'meta_value' => $pancake_id,
-            'posts_per_page' => 1,
-            'fields'     => 'ids',
-        ]);
-    
+        $existing = get_posts(
+            [
+                'post_type'      => 'pancake_product',
+                'meta_key'       => '_pancake_id',
+                'meta_value'     => $pancake_id,
+                'posts_per_page' => 1,
+                'fields'         => 'ids',
+            ]
+        );
+
         if ( ! empty( $existing ) ) {
-            $post_id = $existing[0];
-            $post_data['ID'] = $post_id;
+            $post_id               = (int) $existing[0];
+            $post_data['ID']       = $post_id;
+            $post_data['post_name'] = wp_unique_post_slug( $base_slug, $post_id, 'publish', 'pancake_product', 0 );
             wp_update_post( $post_data );
         } else {
-            $post_id = wp_insert_post( $post_data );
+            $post_data['post_name'] = wp_unique_post_slug( $base_slug, 0, 'publish', 'pancake_product', 0 );
+            $post_id                = wp_insert_post( $post_data );
         }
     
         // Lưu URL ảnh gốc để trạm trung chuyển sử dụng [cite: 63]
@@ -131,6 +137,109 @@ class Bacera_Utils {
             return get_permalink( $pages[0]->ID );
         }
         return home_url( '/' );
+    }
+
+    /**
+     * URL trang Giỏ hàng (template template-cart.php) nếu có; không thì WooCommerce cart hoặc /cart/.
+     */
+    public static function get_cart_page_url() {
+        $pages = get_pages(
+            [
+                'meta_key'   => '_wp_page_template',
+                'meta_value' => 'templates/template-cart.php',
+                'number'     => 1,
+            ]
+        );
+        if ( ! empty( $pages[0] ) ) {
+            return get_permalink( $pages[0]->ID );
+        }
+        if ( function_exists( 'wc_get_cart_url' ) ) {
+            return wc_get_cart_url();
+        }
+        return home_url( '/cart/' );
+    }
+
+    /**
+     * URL trang checkout 3 bước (template template-checkout.php) nếu có page gán template.
+     *
+     * @return string Rỗng nếu chưa tạo page.
+     */
+    public static function get_checkout_page_url() {
+        $pages = get_pages(
+            [
+                'meta_key'   => '_wp_page_template',
+                'meta_value' => 'templates/template-checkout.php',
+                'number'     => 1,
+            ]
+        );
+        if ( ! empty( $pages[0] ) ) {
+            return get_permalink( $pages[0]->ID );
+        }
+        return '';
+    }
+
+    /**
+     * URL trang cảm ơn sau đặt hàng (template template-order-thankyou.php) nếu có page gán template.
+     *
+     * @return string Rỗng nếu chưa tạo page.
+     */
+    public static function get_order_thankyou_page_url() {
+        $pages = get_pages(
+            [
+                'meta_key'   => '_wp_page_template',
+                'meta_value' => 'templates/template-order-thankyou.php',
+                'number'     => 1,
+            ]
+        );
+        if ( ! empty( $pages[0] ) ) {
+            return get_permalink( $pages[0]->ID );
+        }
+        return '';
+    }
+
+    /**
+     * URL bước checkout — ưu tiên template-checkout.php (3 bước), không thì template-checkout-shipping.php.
+     */
+    public static function get_checkout_shipping_page_url() {
+        $unified = self::get_checkout_page_url();
+        if ( $unified !== '' ) {
+            return $unified;
+        }
+        $pages = get_pages(
+            [
+                'meta_key'   => '_wp_page_template',
+                'meta_value' => 'templates/template-checkout-shipping.php',
+                'number'     => 1,
+            ]
+        );
+        if ( ! empty( $pages[0] ) ) {
+            return get_permalink( $pages[0]->ID );
+        }
+        return self::get_cart_page_url();
+    }
+
+    /**
+     * URL bước phương thức giao hàng & thanh toán — ưu tiên template-checkout.php, không thì template-checkout-delivery.php.
+     */
+    public static function get_checkout_delivery_page_url() {
+        $unified = self::get_checkout_page_url();
+        if ( $unified !== '' ) {
+            return $unified;
+        }
+        $pages = get_pages(
+            [
+                'meta_key'   => '_wp_page_template',
+                'meta_value' => 'templates/template-checkout-delivery.php',
+                'number'     => 1,
+            ]
+        );
+        if ( ! empty( $pages[0] ) ) {
+            return get_permalink( $pages[0]->ID );
+        }
+        if ( function_exists( 'wc_get_checkout_url' ) ) {
+            return wc_get_checkout_url();
+        }
+        return self::get_checkout_shipping_page_url();
     }
 
     /**
@@ -227,14 +336,32 @@ class Bacera_Utils {
 
     // Thêm hàm này vào trong class Bacera_Utils
     public static function get_proxy_url( $item ) {
-        $name = $item['product']['name'] ?? $item['name'] ?? 'product';
-        $pancake_id = $item['id'] ?? $item['product_id'] ?? '0';
-        
-        // Tạo slug giống hệt lúc upsert để handle_image_streaming tìm thấy
-        $slug = sanitize_title( $name . '-' . $pancake_id );
-        
-        // Trả về URL cục bộ: bacera.vn/pancake-img/ten-san-pham-id
-        return home_url( "/bacera-img/{$slug}" );
+        $name       = $item['product']['name'] ?? $item['name'] ?? 'product';
+        $pancake_id = $item['id'] ?? $item['product_id'] ?? null;
+
+        $slug = '';
+        if ( $pancake_id !== null && $pancake_id !== '' ) {
+            $found = get_posts(
+                [
+                    'post_type'      => 'pancake_product',
+                    'post_status'    => 'any',
+                    'meta_key'       => '_pancake_id',
+                    'meta_value'     => $pancake_id,
+                    'posts_per_page' => 1,
+                ]
+            );
+            if ( ! empty( $found[0] ) && $found[0] instanceof \WP_Post ) {
+                $slug = $found[0]->post_name;
+            }
+        }
+        if ( $slug === '' ) {
+            $slug = sanitize_title( $name );
+            if ( $slug === '' ) {
+                $slug = 'product';
+            }
+        }
+
+        return home_url( '/bacera-img/' . $slug );
     }
 
     /**
@@ -244,15 +371,21 @@ class Bacera_Utils {
      * @return string URL đầy đủ hoặc chuỗi rỗng nếu không tạo được.
      */
     public static function get_product_permalink( $item ) {
-        $name       = $item['product']['name'] ?? $item['name'] ?? 'product';
         $pancake_id = $item['id'] ?? $item['product_id'] ?? null;
         if ( $pancake_id === null || $pancake_id === '' ) {
             return '';
         }
-        $slug = sanitize_title( $name . '-' . $pancake_id );
-        $post = get_page_by_path( $slug, OBJECT, 'pancake_product' );
-        if ( $post instanceof \WP_Post ) {
-            return get_permalink( $post );
+        $posts = get_posts(
+            [
+                'post_type'      => 'pancake_product',
+                'post_status'    => 'publish',
+                'meta_key'       => '_pancake_id',
+                'meta_value'     => $pancake_id,
+                'posts_per_page' => 1,
+            ]
+        );
+        if ( ! empty( $posts[0] ) && $posts[0] instanceof \WP_Post ) {
+            return get_permalink( $posts[0] );
         }
         return '';
     }
