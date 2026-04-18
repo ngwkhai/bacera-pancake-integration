@@ -24,6 +24,7 @@ $files_to_include = [
     'includes/modules/class-module-products.php',
     'includes/modules/class-module-orders.php',
     'includes/modules/class-module-geo.php',
+    'includes/modules/class-module-shops.php',
     'includes/modules/class-module-customers.php',
     'includes/modules/class-module-webhooks.php',
 ];
@@ -41,6 +42,7 @@ function bacera_pancake_init() {
     Bacera_Module_Products::init();
     Bacera_Module_Orders::init();
     Bacera_Module_Geo::init();
+    Bacera_Module_Shops::init();
     Bacera_Module_Customers::init();
     Bacera_Module_Webhooks::init();
 }

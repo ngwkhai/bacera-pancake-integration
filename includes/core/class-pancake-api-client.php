@@ -98,4 +98,13 @@ class Pancake_API_Client {
 
         return is_array( $decoded_body ) ? $decoded_body : false;
     }
+
+    /**
+     * GET /shops — danh sách cửa hàng (chỉ cần api_key).
+     *
+     * @return array|false
+     */
+    public function request_shops() {
+        return $this->request_geo( '/shops', [] );
+    }
 }

@@ -272,66 +272,108 @@ class Bacera_Utils {
        ========================================================================== */
 
     /**
+     * Slug dành riêng trong /bacera-img/{slug} — logo cửa hàng (Pancake GET /shops → avatar_url).
+     */
+    const PANCAKE_SHOP_LOGO_SLUG = 'bacera-pancake-shop';
+
+    /**
+     * URL proxy logo cửa hàng (trống nếu chưa đồng bộ avatar từ Pancake).
+     *
+     * @return string
+     */
+    public static function get_pancake_shop_logo_proxy_url() {
+        $src = get_option( 'bacera_pancake_shop_avatar_source_url', '' );
+        if ( ! is_string( $src ) || $src === '' ) {
+            return '';
+        }
+        return home_url( '/bacera-img/' . self::PANCAKE_SHOP_LOGO_SLUG );
+    }
+
+    /**
+     * Tải ảnh từ URL tuyệt đối và trả raw response (dùng cho proxy). Thành công thì exit.
+     *
+     * @param string $original_url URL ảnh gốc (Pancake CDN…).
+     * @return bool False nếu không stream được (caller không được tiếp tục xử lý slug khác).
+     */
+    private static function stream_remote_image_and_exit( $original_url ) {
+        $original_url = is_string( $original_url ) ? trim( $original_url ) : '';
+        if ( $original_url === '' ) {
+            return false;
+        }
+
+        $response = wp_remote_get(
+            $original_url,
+            [
+                'timeout'    => 20,
+                'user-agent' => 'Bacera-Image-Proxy/1.0',
+                'sslverify'  => false,
+            ]
+        );
+
+        if ( is_wp_error( $response ) ) {
+            self::log_error( 'Lỗi kết nối server ảnh: ' . $response->get_error_message() );
+            return false;
+        }
+
+        $image_data   = wp_remote_retrieve_body( $response );
+        $content_type = wp_remote_retrieve_header( $response, 'content-type' );
+
+        if ( empty( $image_data ) ) {
+            self::log_error( 'Dữ liệu ảnh trả về từ nguồn bị trống.' );
+            return false;
+        }
+
+        while ( ob_get_level() ) {
+            ob_end_clean();
+        }
+
+        header( 'Content-Type: ' . $content_type );
+        header( 'Cache-Control: public, max-age=604800' );
+        header( 'X-Source: Bacera-Pancake-Proxy' );
+        header( 'Content-Length: ' . strlen( $image_data ) );
+
+        echo $image_data; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        exit;
+    }
+
+    /**
      * "Trạm trung chuyển" lấy ảnh từ Pancake và đẩy về trình duyệt.
      */
     public static function handle_image_streaming() {
-        // 1. Lấy slug từ URL
         $slug = get_query_var( 'bacera_img_slug' );
-        if ( ! $slug ) return;
-    
-        // Xóa dấu gạch chéo ở cuối slug nếu có (để khớp với database)
+        if ( ! $slug ) {
+            return;
+        }
+
         $slug = rtrim( $slug, '/' );
-    
-        // 2. Truy vấn tìm Post trong CPT 'pancake_product'
-        // Chúng ta cần tìm đúng loại post đã lưu ở bước upsert [cite: 317, 318]
+
+        if ( $slug === self::PANCAKE_SHOP_LOGO_SLUG ) {
+            $original_url = get_option( 'bacera_pancake_shop_avatar_source_url', '' );
+            if ( ! is_string( $original_url ) || $original_url === '' ) {
+                self::log_error( 'Proxy logo cửa hàng: chưa có bacera_pancake_shop_avatar_source_url (đồng bộ /shops?).' );
+                return;
+            }
+            if ( ! self::stream_remote_image_and_exit( $original_url ) ) {
+                return;
+            }
+        }
+
         $product = get_page_by_path( $slug, OBJECT, 'pancake_product' );
-    
+
         if ( ! $product ) {
             self::log_error( "Proxy lỗi: Không tìm thấy sản phẩm với slug [$slug] trong database." );
-            // Nếu không tìm thấy, cho phép WP tiếp tục tải trang 404 bình thường
-            return; 
+            return;
         }
-    
-        // 3. Lấy URL gốc từ Metadata [cite: 310, 311]
+
         $original_url = get_post_meta( $product->ID, '_pancake_image_url', true );
         if ( ! $original_url ) {
             self::log_error( "Proxy lỗi: Sản phẩm ID {$product->ID} thiếu metadata _pancake_image_url." );
             return;
         }
-    
-        // 4. Tải ảnh từ server Pancake [cite: 451]
-        $response = wp_remote_get( $original_url, [
-            'timeout'    => 20,
-            'user-agent' => 'Bacera-Image-Proxy/1.0',
-            'sslverify'  => false, // Thêm dòng này nếu localhost của bạn chưa cấu hình SSL chuẩn
-        ] );
-    
-        if ( is_wp_error( $response ) ) {
-            self::log_error( 'Lỗi kết nối server Pancake: ' . $response->get_error_message() );
+
+        if ( ! self::stream_remote_image_and_exit( $original_url ) ) {
             return;
         }
-    
-        $image_data = wp_remote_retrieve_body( $response );
-        $content_type = wp_remote_retrieve_header( $response, 'content-type' );
-    
-        if ( empty( $image_data ) ) {
-            self::log_error( 'Dữ liệu ảnh trả về từ Pancake bị trống.' );
-            return;
-        }
-    
-        // GIAI ĐOẠN HOÀN THIỆN: Đẩy dữ liệu về trình duyệt
-        // Kiểm tra và dọn dẹp buffer một cách an toàn để tránh lỗi "headers already sent"
-        while ( ob_get_level() ) {
-            ob_end_clean();
-        }
-    
-        header( "Content-Type: $content_type" );
-        header( "Cache-Control: public, max-age=604800" ); // Lưu cache 7 ngày để tối ưu UX [cite: 332]
-        header( "X-Source: Bacera-Pancake-Proxy" );
-        header( "Content-Length: " . strlen( $image_data ) ); // Thông báo kích thước file cho trình duyệt
-        
-        echo $image_data;
-        exit; // Dừng mọi tiến trình khác để file ảnh không bị lẫn mã HTML/Text thừa
     }
 
     // Thêm hàm này vào trong class Bacera_Utils
