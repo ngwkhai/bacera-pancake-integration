@@ -38,6 +38,8 @@ class Pancake_API_Client {
             $args['body'] = wp_json_encode( $body );
         }
 
+        $args = apply_filters( 'bacera_pancake_http_request_args', $args, $url, $method );
+
         $response = wp_remote_request( $url, $args );
 
         if ( is_wp_error( $response ) ) {
@@ -83,6 +85,8 @@ class Pancake_API_Client {
                 'Content-Type' => 'application/json',
             ],
         ];
+
+        $args = apply_filters( 'bacera_pancake_http_request_args', $args, $url, 'GET' );
 
         $response = wp_remote_get( $url, $args );
 

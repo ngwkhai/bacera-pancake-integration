@@ -301,14 +301,13 @@ class Bacera_Utils {
             return false;
         }
 
-        $response = wp_remote_get(
-            $original_url,
-            [
-                'timeout'    => 20,
-                'user-agent' => 'Bacera-Image-Proxy/1.0',
-                'sslverify'  => false,
-            ]
-        );
+        $stream_args = [
+            'timeout'    => 20,
+            'user-agent' => 'Bacera-Image-Proxy/1.0',
+        ];
+        $stream_args = apply_filters( 'bacera_pancake_image_stream_http_args', $stream_args, $original_url );
+
+        $response = wp_remote_get( $original_url, $stream_args );
 
         if ( is_wp_error( $response ) ) {
             self::log_error( 'Lỗi kết nối server ảnh: ' . $response->get_error_message() );
